@@ -70,7 +70,7 @@
       (nil? x) p2
       (nil? x2) p1
       (and (= x x2) (not= y y2)) (Point. nil nil a b)
-      (= p1 p2) (if (= y (* 0 x)) (Point. nil nil a b)
+      (= p1 p2) (if (= y (zero x)) (Point. nil nil a b)
                     (let [s (/ (+ (* 3 (expt x 2)) a) (* 2 y)),
                           x3 (- (expt s 2) (* 2 x))
                           y3 (- (* s (- x x3)) y)]
@@ -88,14 +88,30 @@
   (assert (valid-point? x y a b) "Point not on curve")
   (Point. x y a b))
 
-(defn ->S256FieldElement [num]
-  (->FieldElement num P))
+(defrecord S256Point [x y]
+  FieldOps
+  (zero [p] (S256Point. nil nil))
+  (+ [p1 {x2 :x y2 :y :as p2}]
+    (cond
+      (nil? x) p2
+      (nil? x2) p1
+      (and (= x x2) (not= y y2)) (S256Point. nil nil)
+      (= p1 p2) (if (= y (zero x)) (S256Point. nil nil)
+                    (let [s (/ (* 3 (expt x 2)) (* 2 y)),
+                          x3 (- (expt s 2) (* 2 x))
+                          y3 (- (* s (- x x3)) y)]
+                      (S256Point. x3 y3)))
+      :else (let [s (/ (- y2 y) (- x2 x)),
+                  x3 (- (- (expt s 2) x) x2),
+                  y3 (- (* s (- x x3)) y)]
+              (S256Point. x3 y3)))))
 
 (defn ->S256Point [x y]
-  (->Point (->S256FieldElement x) (->S256FieldElement y) (->S256FieldElement A) (->S256FieldElement B)))
+  (let [x (->FieldElement x P), y (->FieldElement y P) A (->FieldElement A P), B (->FieldElement B P)]
+    (assert (valid-point? x y A B) "Point not on curve")
+    (S256Point. x y)))
 
-(defn S256Point? [p]
-  (and (instance? Point p) (= (:a p) (->S256FieldElement A))))
+(defn S256Point? [p] (instance? S256Point p))
 
 (def G (->S256Point
         0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798,
@@ -109,9 +125,4 @@
             (println (str " 0x" (.toString x 16) ","))
             (println (str " 0x" (.toString y 16) ")"))))))
 
-(defn pprint-point [p]
-  (if (S256Point? p)
-    (pprint-256point p)
-    (clojure.pprint/pprint p)))
-
-(. clojure.pprint/simple-dispatch addMethod Point pprint-point)
+(. clojure.pprint/simple-dispatch addMethod S256Point pprint-256point)
