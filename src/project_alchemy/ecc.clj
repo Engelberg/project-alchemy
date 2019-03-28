@@ -217,7 +217,41 @@
   (= flag 2) (->S256Point x even_beta)
   :else (->S256Point x odd_beta))
 
+(defn der ^bytes [{r :r s :s}]
+  (let [rbin (.toByteArray (biginteger r)),
+        rbin (concat [2 (count rbin)] rbin)
+        sbin (.toByteArray (biginteger s))
+        sbin (concat [2 (count sbin)] sbin)]
+    (byte-array (concat [0x30 (+ (count rbin) (count sbin))]
+                        rbin sbin))))
+  
+(defnc parse-der [^bytes der-bytes]
+  :let [marker (nth der-bytes 0)]
+  :do (assert (= marker 0x30) "Bad Signature")
+  :let [length (nth der-bytes 1)]
+  :do (assert (= (+ length 2) (count der-bytes)) "Bad Signature Length")
+  :let [r-marker (nth der-bytes 2)]
+  :do (assert (= r-marker 2) "Bad Signature")
+  :let [r-length (int (nth der-bytes 3)),
+        r (BigInteger. ^bytes (Arrays/copyOfRange der-bytes
+                                                  (int 4)
+                                                  (int (+ 4 r-length))))
+        s-start (+ 4 r-length)
+        s-marker (nth der-bytes s-start)]
+  :do (assert (= s-marker 2) "Bad Signature")
+  :let [s-length (nth der-bytes (inc s-start)),
+        s (BigInteger. ^bytes (Arrays/copyOfRange
+                               der-bytes
+                               (int (+ s-start 2))
+                               (int (+' s-start 2 s-length))))]
+  :do (println length r-length s-length)
+  :do (assert (= (count der-bytes) (+' 6 r-length s-length))
+              "Signature too long")
+  (->Signature r s))
+        
+  
 
+  
 
 
 
