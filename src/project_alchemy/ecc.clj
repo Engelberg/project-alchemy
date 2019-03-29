@@ -1,4 +1,6 @@
-(ns project-alchemy.ecc
+(ns ^{:author "Mark Engelberg",
+      :doc "A Clojure port of chapters 1-4 of Programming Bitcoin"}
+    project-alchemy.ecc
   (:refer-clojure :exclude [+ - * / cond])
   (:require [clojure.math.numeric-tower :as nt]
             [better-cond.core :refer [cond defnc defnc-]]
@@ -10,7 +12,7 @@
            javax.crypto.Mac
            javax.crypto.spec.SecretKeySpec))
 
-(declare S256Point? bytes32->num)
+(declare S256Point? bytes->num)
 (def P (clojure.core/- (nt/expt 2 256) (nt/expt 2 32) 977))
 (def N 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141)
 
@@ -135,7 +137,7 @@
 
 ;; First version of signing algo uses random number for nonce
 (defn rand-256 "Generates a random 256 bit number" []
-  (bytes32->num (nonce/random-bytes 32)))
+  (bytes->num (nonce/random-bytes 32)))
 (defnc rand-N "Generates a random number in Z_N" []
   :let [i (rand-256)]
   (< i N) i
@@ -147,19 +149,18 @@
         _ (.init hasher (SecretKeySpec. key "HmacSHA256"))]
     (.doFinal hasher message)))
 
-(defn num->bytes32 "Assumes number fits into 32 bytes"
-  ^bytes [n]
+(defn num->bytes "Big endian encoding"
+  ^bytes [length n]
   (let [a (.toByteArray (biginteger n)),
         l (count a),
-        zeros (repeat (- 32 l) (byte 0))]
+        zeros (repeat (- length l) (byte 0))]
     ;; unsigned 32-byte num produces 33 bytes with leading 0,
     ;; which needs to be dropped
-    (if (> l 32) 
-      (byte-array (drop (- l 32) (seq a)))
+    (if (> l length) 
+      (byte-array (drop (- l length) (seq a)))
       (byte-array (concat zeros a)))))
 
-(defn bytes32->num "Interprets as unsigned 256-bit number"
-  [^bytes bs]
+(defn bytes->num "Interprets as unsigned 256-bit number" [bs]
   (BigInteger. (byte-array (into [0] bs))))
 
 (defn deterministic-k "Generates a k from secret and z"
@@ -167,8 +168,8 @@
   (let [k (byte-array 32 (byte 0))
         v (byte-array 32 (byte 1))
         z (if (> z N) (- z N) z)
-        z-bytes (num->bytes32 z)
-        secret-bytes (num->bytes32 secret)
+        z-bytes (num->bytes 32 z)
+        secret-bytes (num->bytes 32 secret)
         k (hmac k (byte-array (concat v [0] secret-bytes z-bytes)))
         v (hmac k v)
         k (hmac k (byte-array (concat v [1] secret-bytes z-bytes)))
@@ -176,7 +177,7 @@
     (loop [k k v v]
       (cond
         :let [v (hmac k v)
-              candidate (bytes32->num v)]
+              candidate (bytes->num v)]
         (and (<= 1 candidate) (< candidate N)) candidate
         :let [k (hmac k (byte-array (concat v [0]))),
               v (hmac k v)]
@@ -199,15 +200,15 @@
    (cond
      (not compressed?)
      (byte-array
-      (concat [4] (num->bytes32 (:num x)) (num->bytes32 (:num y))))
+      (concat [4] (num->bytes 32 (:num x)) (num->bytes 32 (:num y))))
      (byte-array
-      (concat (if (even? (:num y)) [2] [3]) (num->bytes32 (:num x)))))))
+      (concat (if (even? (:num y)) [2] [3]) (num->bytes 32 (:num x)))))))
 
 (defnc parse-sec "Parses SEC bytes" [^bytes sec-bytes]
   :let [flag (nth sec-bytes 0)]
-  (= flag 4) (->S256Point (bytes32->num (Arrays/copyOfRange sec-bytes 1 33))
-                          (bytes32->num (Arrays/copyOfRange sec-bytes 33 65)))
-  :let [x (->FieldElement (bytes32->num (Arrays/copyOfRange sec-bytes 1 33)) P),
+  (= flag 4) (->S256Point (bytes->num (Arrays/copyOfRange sec-bytes 1 33))
+                          (bytes->num (Arrays/copyOfRange sec-bytes 33 65)))
+  :let [x (->FieldElement (bytes->num (Arrays/copyOfRange sec-bytes 1 33)) P),
         alpha (+ (expt x 3) B)
         beta (expt alpha (/ (inc P) 4))
         even_beta (if (even? (:num beta))
@@ -265,7 +266,7 @@
 (defn encode-base58 [bs]
   (let [num-zeroes (count (take-while #{0} bs))
         prefix (repeat num-zeroes \1)]
-    (loop [num (bytes32->num bs), result ()]
+    (loop [num (bytes->num bs), result ()]
       (cond
         (= num 0) (apply str (concat prefix result)),
         :let [digit (rem num 58)]
@@ -294,7 +295,7 @@
                 (recur (+ (* num 58) (get REVERSE-BASE58 (first chars)))
                        (next chars))
                 num)),
-        combined (drop 7 (num->bytes32 num)),
+        combined (num->bytes 25 num),
         checksum (take-last 4 combined)
         without-checksum (drop-last 4 combined)]
   :do (assert (= checksum (take 4 (hash256 (byte-array without-checksum)))) "Bad address")
@@ -310,24 +311,24 @@
          (merge {:compressed? true, :testnet? false} options),
          secret (if (instance? PrivateKey secret)
                   (:secret secret) secret)
-         secret-bytes (num->bytes32 secret),
+         secret-bytes (num->bytes 32 secret),
          prefix (if testnet? [(unchecked-byte 0xef)] [(unchecked-byte 0x80)])
          suffix (if compressed? [(byte 0x01)] [])]
    (encode-base58-checksum (byte-array (concat prefix secret-bytes suffix)))))
 
+;; little endian encoding and decoding
 
+(defn le-bytes->num "little endian decoding" [bs]
+  (bytes->num (reverse bs)))
 
-
-
-
-
-
-
-
-
-
-
-
+(defn le-num->bytes "little endian encoding"
+  ^bytes [length n]
+  (let [a (.toByteArray (biginteger n)),
+        l (count a),
+        zeros (repeat (- length l) (byte 0))]
+    (if (> l length) 
+      (byte-array (drop (- l length) (seq a)))
+      (byte-array (reverse (concat zeros a))))))
 
 ;;; Printing utilities
 
@@ -337,14 +338,4 @@
   (if (not= prime P) (pr f)
       (print (hex num))))
 (. clojure.pprint/simple-dispatch addMethod FieldElement pprint-FieldElement)
-
-;; (defn- left0
-;;   "Adds 0 on the left of a single-digit string, since a byte should always be two hex digits"
-;;   [s]
-;;   (if (= (count s) 1) (str \0 s) s))
-
-;; (defn hex-encode
-;;   "Converts bytes to string of hexadecimal numbers"
-;;   [bs]
-;;   (apply str (map (comp left0 #(Integer/toUnsignedString % 16) #(Byte/toUnsignedInt %)) bs)))
 
