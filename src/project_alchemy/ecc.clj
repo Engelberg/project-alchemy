@@ -1,7 +1,10 @@
 (ns project-alchemy.ecc
   (:refer-clojure :exclude [+ - * / cond])
   (:require [clojure.math.numeric-tower :as nt]
-            [better-cond.core :refer [cond defnc defnc-]])
+            [better-cond.core :refer [cond defnc defnc-]]
+            [buddy.core.hash :as h]
+            [buddy.core.nonce :as nonce]
+            [buddy.core.codecs :refer :all])
   (:import java.util.Arrays
            java.security.SecureRandom
            javax.crypto.Mac
@@ -131,10 +134,9 @@
   (PrivateKey. secret (* secret G)))
 
 ;; First version of signing algo uses random number for nonce
-(def ^SecureRandom secure-random (SecureRandom.))
-(defn rand-256 "Generates a random 256 bit number" ^BigInteger []
-  (bytes32->num 256 secure-random))
-(defnc rand-N "Generates a random number in Z_N" ^BigInteger []
+(defn rand-256 "Generates a random 256 bit number" []
+  (bytes32->num (nonce/random-bytes 32)))
+(defnc rand-N "Generates a random number in Z_N" []
   :let [i (rand-256)]
   (< i N) i
   (recur))
@@ -248,10 +250,77 @@
   :do (assert (= (count der-bytes) (+' 6 r-length s-length))
               "Signature too long")
   (->Signature r s))
-        
-  
 
-  
+;; Base 58 encoding
+
+(defn hash160 [bs]
+  (h/ripemd160 (h/sha256 bs)))
+
+(defn hash256 [bs]
+  (h/sha256 (h/sha256 bs)))
+
+(def BASE58-ALPHABET "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+(def REVERSE-BASE58 (into {} (for [i (range 58)] [(nth BASE58-ALPHABET i) i])))
+
+(defn encode-base58 [bs]
+  (let [num-zeroes (count (take-while #{0} bs))
+        prefix (repeat num-zeroes \1)]
+    (loop [num (bytes32->num bs), result ()]
+      (cond
+        (= num 0) (apply str (concat prefix result)),
+        :let [digit (rem num 58)]
+        (recur (quot num 58) (conj result (nth BASE58-ALPHABET digit)))))))
+
+(defn encode-base58-checksum [bs]
+  (encode-base58 (concat bs (take 4 (hash256 bs)))))
+
+;; Addresses
+
+(defn hash-sec [point compressed?]
+  (hash160 (sec point compressed?)))
+
+(defnc point->address "options map :compressed? and :testnet?"
+  ([point] (point->address point {}))
+  ([point options]
+   :let [{:keys [compressed? testnet?]}
+         (merge {:compressed? true, :testnet? false} options),
+         h160 (hash-sec point compressed?),
+         prefix (if testnet? (byte 0x6f) (byte 0x00))]
+   (encode-base58-checksum (byte-array (cons prefix h160)))))
+   
+(defnc address->hash [address]
+  :let [num (loop [num 0 chars (seq address)]
+              (if chars
+                (recur (+ (* num 58) (get REVERSE-BASE58 (first chars)))
+                       (next chars))
+                num)),
+        combined (drop 7 (num->bytes32 num)),
+        checksum (take-last 4 combined)
+        without-checksum (drop-last 4 combined)]
+  :do (assert (= checksum (take 4 (hash256 (byte-array without-checksum)))) "Bad address")
+  (byte-array (rest without-checksum)))
+
+;; WIF format for private key
+
+(defnc wif "Takes 256-bit secret number or PrivateKey record.
+            options map :compressed? and :testnet?"
+  ([secret] (wif secret {}))
+  ([secret options]
+   :let [{:keys [compressed? testnet?]}
+         (merge {:compressed? true, :testnet? false} options),
+         secret (if (instance? PrivateKey secret)
+                  (:secret secret) secret)
+         secret-bytes (num->bytes32 secret),
+         prefix (if testnet? [(unchecked-byte 0xef)] [(unchecked-byte 0x80)])
+         suffix (if compressed? [(byte 0x01)] [])]
+   (encode-base58-checksum (byte-array (concat prefix secret-bytes suffix)))))
+
+
+
+
+
+
+
 
 
 
@@ -269,13 +338,13 @@
       (print (hex num))))
 (. clojure.pprint/simple-dispatch addMethod FieldElement pprint-FieldElement)
 
-(defn- left0
-  "Adds 0 on the left of a single-digit string, since a byte should always be two hex digits"
-  [s]
-  (if (= (count s) 1) (str \0 s) s))
+;; (defn- left0
+;;   "Adds 0 on the left of a single-digit string, since a byte should always be two hex digits"
+;;   [s]
+;;   (if (= (count s) 1) (str \0 s) s))
 
-(defn hex-encode
-  "Converts bytes to string of hexadecimal numbers"
-  [bs]
-  (apply str (map (comp left0 #(Integer/toUnsignedString % 16) #(Byte/toUnsignedInt %)) bs)))
+;; (defn hex-encode
+;;   "Converts bytes to string of hexadecimal numbers"
+;;   [bs]
+;;   (apply str (map (comp left0 #(Integer/toUnsignedString % 16) #(Byte/toUnsignedInt %)) bs)))
 
