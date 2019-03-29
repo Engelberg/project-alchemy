@@ -247,7 +247,6 @@
                                der-bytes
                                (int (+ s-start 2))
                                (int (+' s-start 2 s-length))))]
-  :do (println length r-length s-length)
   :do (assert (= (count der-bytes) (+' 6 r-length s-length))
               "Signature too long")
   (->Signature r s))
