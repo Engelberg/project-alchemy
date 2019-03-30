@@ -6,6 +6,7 @@
   :dependencies [[org.clojure/clojure "1.10.0"]
                  [better-cond "2.0.2"]                 
                  [org.clojure/math.numeric-tower "0.0.4"]
+                 [org.clojure/core.memoize "0.7.1"]
                  [buddy/buddy-core "1.4.0"]
                  [byte-streams "0.2.4"]
                  [funcool/octet "1.1.1"]

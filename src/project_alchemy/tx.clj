@@ -6,8 +6,11 @@
             [project-alchemy.helper :refer [read-bytes read-varint encode-varint le-bytes->num le-num->bytes hash256]]
             [project-alchemy.script :as script]
             [buddy.core.codecs :refer :all]
-            [clojure.java.io :as io])
+            [clojure.java.io :as io]
+            [clojure.core.memoize :as memoize])
   (:import java.io.InputStream))
+
+(declare id)
 
 (defrecord Tx [version tx-ins tx-outs locktime testnet?])
 (defrecord TxIn [prev-tx prev-index script-sig sequence])
@@ -15,19 +18,24 @@
 
 ;; Fetching txs, needed to look up info about previous txs
 
-(defn get-url [testnet?]
-  (if testnet? "http://testnet.programmingbitcoin.com"
-      "http://mainnet.programmingbitcoin.com"))
+(defn get-url [tx-id testnet?]
+  (if testnet?
+    (format "http://testnet.programmingbitcoin.com/tx/%s.hex" tx-id)
+    ;; mainnet.programmingbitcoin.com appears to be down, so we use blockchain.info
+    (format "https://blockchain.info/rawtx/%s?format=hex" tx-id)))
 
 (defnc fetch-tx [tx-id testnet?]
-  :let [url (format "%s/tx/%s.hex" (get-url testnet?) tx-id)
+  :let [url (get-url tx-id testnet?)
         response (slurp url)
         raw (hex->bytes (clojure.string/trim response))
         tx (parse-tx (io/input-stream raw) testnet?)]
   :do (assert (= (id tx) (:tx-id tx))
               (format "IDs don't match %s %s" (id tx) (:tx-id tx)))
   ;; Currently assumes it is NOT a segwit transaction
+  ;; Book has hack to work around segwit txs, but seems better to wait
+  ;; and code it correctly
   response)
+(def fetch-tx (memoize/fifo fetch-tx))
 
 ;; parsing and serializing
 
