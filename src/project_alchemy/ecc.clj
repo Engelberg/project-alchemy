@@ -4,7 +4,8 @@
   (:refer-clojure :exclude [+ - * / cond])
   (:require [clojure.math.numeric-tower :as nt]
             [better-cond.core :refer [cond defnc defnc-]]
-            [buddy.core.hash :as h]
+            [project-alchemy.helper :refer [hash160 hash256 read-bytes
+                                            bytes->num num->bytes]]
             [buddy.core.nonce :as nonce]
             [buddy.core.codecs :refer :all])
   (:import java.util.Arrays
@@ -12,7 +13,7 @@
            javax.crypto.Mac
            javax.crypto.spec.SecretKeySpec))
 
-(declare S256Point? bytes->num)
+(declare S256Point?)
 (def P (clojure.core/- (nt/expt 2 256) (nt/expt 2 32) 977))
 (def N 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141)
 
@@ -149,20 +150,6 @@
         _ (.init hasher (SecretKeySpec. key "HmacSHA256"))]
     (.doFinal hasher message)))
 
-(defn num->bytes "Big endian encoding"
-  ^bytes [length n]
-  (let [a (.toByteArray (biginteger n)),
-        l (count a),
-        zeros (repeat (- length l) (byte 0))]
-    ;; unsigned 32-byte num produces 33 bytes with leading 0,
-    ;; which needs to be dropped
-    (if (> l length) 
-      (byte-array (drop (- l length) (seq a)))
-      (byte-array (concat zeros a)))))
-
-(defn bytes->num "Interprets as unsigned 256-bit number" [bs]
-  (BigInteger. (byte-array (into [0] bs))))
-
 (defn deterministic-k "Generates a k from secret and z"
   [secret z]
   (let [k (byte-array 32 (byte 0))
@@ -253,12 +240,6 @@
 
 ;; Base 58 encoding
 
-(defn hash160 [bs]
-  (h/ripemd160 (h/sha256 bs)))
-
-(defn hash256 [bs]
-  (h/sha256 (h/sha256 bs)))
-
 (def BASE58-ALPHABET "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
 (def REVERSE-BASE58 (into {} (for [i (range 58)] [(nth BASE58-ALPHABET i) i])))
 
@@ -315,26 +296,12 @@
          suffix (if compressed? [(byte 0x01)] [])]
    (encode-base58-checksum (byte-array (concat prefix secret-bytes suffix)))))
 
-;; little endian encoding and decoding
-
-(defn le-bytes->num "little endian decoding" [bs]
-  (bytes->num (reverse bs)))
-
-(defn le-num->bytes "little endian encoding"
-  ^bytes [length n]
-  (let [a (.toByteArray (biginteger n)),
-        l (count a),
-        zeros (repeat (- length l) (byte 0))]
-    (if (> l length) 
-      (byte-array (drop (- l length) (seq a)))
-      (byte-array (reverse (concat zeros a))))))
-
 ;;; Printing utilities
 
 ;; Print secp256k1 points in hex notation
-(defn hex [n] (format "0x%064x" (biginteger n)))
+(defn hex64 [n] (format "0x%064x" (biginteger n)))
 (defn pprint-FieldElement [{:keys [num prime] :as f}]
   (if (not= prime P) (pr f)
-      (print (hex num))))
+      (print (hex64 num))))
 (. clojure.pprint/simple-dispatch addMethod FieldElement pprint-FieldElement)
 
