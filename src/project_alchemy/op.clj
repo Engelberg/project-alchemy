@@ -107,13 +107,13 @@
 
 (defnc op-nop [stack] true)
 
-(defnc op-if [stack a-items]
+(defnc op-if "Takes stack and atom with items to manipulate" [stack a-items]
   (< (count stack) 1) false
-  :let [[found? true-items false-items]
+  :let [[items true-items false-items]
         (loop [items (seq @a-items) true-items [] false-items [] current-array true
                num-endifs-needed 1]
           (if-not items
-            [false true-items false-items]
+            [false true-items false-items] ;; false signals we failed to find endif
             (cond
               :let [item (first items), items (next items)]
               (contains? #{99 100} item)
@@ -126,23 +126,23 @@
               
               (= item 104)
               (cond
-                (= num-endifs-needed 1) [true true-items false-items]
+                (= num-endifs-needed 1) [items true-items false-items]
                 current-array (recur items (conj true-items item) false-items current-array (dec num-endifs-needed))
                 :else (recur items true-items (conj false-items item) current-array (dec num-endifs-needed)))
               
               current-array (recur items (conj true-items item) false-items current-array num-endifs-needed)
               :else (recur items true-items (conj false-items item) current-array num-endifs-needed))))]
   
-  (not found?) false
+  (false? items) false
   :let [element (pop stack)]
   :do (if (= 0 (decode-num element))
-        (swap! a-items #(concat false-items %))
-        (swap! a-items #(concat true-items %)))
+        (reset! a-items (concat false-items items))
+        (reset! a-items (concat true-items items)))
   true)
 
 (defnc op-notif [stack a-items]
   (< (count stack) 1) false
-  :let [[found? true-items false-items]
+  :let [[items true-items false-items]
         (loop [items (seq @a-items) true-items [] false-items [] current-array true
                num-endifs-needed 1]
           (if-not items
@@ -159,18 +159,18 @@
               
               (= item 104)
               (cond
-                (= num-endifs-needed 1) [true true-items false-items]
+                (= num-endifs-needed 1) [items true-items false-items]
                 current-array (recur items (conj true-items item) false-items current-array (dec num-endifs-needed))
                 :else (recur items true-items (conj false-items item) current-array (dec num-endifs-needed)))
               
               current-array (recur items (conj true-items item) false-items current-array num-endifs-needed)
               :else (recur items true-items (conj false-items item) current-array num-endifs-needed))))]
   
-  (not found?) false
+  (false? items) false
   :let [element (pop stack)]
   :do (if (= 0 (decode-num element))
-        (swap! a-items #(concat true-items %))
-        (swap! a-items #(concat false-items %)))
+        (reset! a-items (concat true-items items))
+        (reset! a-items (concat false-items items)))
   true)
 
 (defnc op-verify [stack]
