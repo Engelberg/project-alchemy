@@ -9,6 +9,9 @@
     (.read stream buffer)
     buffer))
 
+(defn unsigned-byte [b]
+  (if (neg? b) (+ 256 b) b))
+
 ;; big endian encoding and decoding
 
 (defn num->bytes "Big endian encoding"

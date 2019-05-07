@@ -42,14 +42,14 @@
 (defnc parse-tx-in [^InputStream stream]
   :let [prev-tx (le-bytes->num (read-bytes stream 32))
         prev-index (le-bytes->num (read-bytes stream 4))
-        script-sig (script/parse-script-sig stream) 
+        script-sig (script/parse-script stream) 
         sequence (le-bytes->num (read-bytes stream 4))]
   (->TxIn prev-tx prev-index script-sig sequence))
 
 (defn serialize-tx-in ^bytes [{:keys [prev-tx prev-index script-sig sequence]}]
   (byte-array (concat (rseq prev-tx)
                       (le-num->bytes 4 prev-index)
-                      (script/serialize-script-sig script-sig)
+                      (script/serialize-script script-sig)
                       (le-num->bytes 4 sequence))))
 
 (defn fetch-tx-in [{:keys [prev-tx]} testnet?]
@@ -65,11 +65,12 @@
 
 (defnc parse-tx-out [^InputStream stream]
   :let [amount (le-bytes->num (read-bytes stream 8))
-        script-pubkey (script/parse-script-pubkey stream)] 
+        script-pubkey (script/parse-script stream)] 
   (->TxOut amount script-pubkey))
 
 (defn serialize-tx-out [{:keys [amount script-pubkey]}]
-  (byte-array (concat (le-num->bytes 8 amount) (script/serialize-script-pubkey script-pubkey))))
+  (byte-array (concat (le-num->bytes 8 amount)
+                      (script/serialize-script script-pubkey))))
 
 (defnc parse-tx [^InputStream stream testnet?]
   :let [version (le-bytes->num (read-bytes stream 4))

@@ -1,6 +1,6 @@
 (ns project-alchemy.op
   (:refer-clojure :exclude [cond pop peek])
-  (:require [project-alchemy.helper :refer [read-bytes read-varint encode-varint le-bytes->num le-num->bytes hash160 hash256]]
+  (:require [project-alchemy.helper :refer [read-bytes read-varint encode-varint le-bytes->num le-num->bytes hash160 hash256 unsigned-byte]]
             [better-cond.core :refer [defnc defnc- cond]]
             [clojure.math.numeric-tower :as m]
             [project-alchemy.ecc :as ecc]
@@ -36,9 +36,6 @@
                                       result)
                       (recur (conj result (bit-and abs-num 0xff))
                              (unsigned-bit-shift-right abs-num 8))))))
-
-(defn unsigned-byte [b]
-  (if (neg? b) (+ 256 b) b))
 
 (defnc decode-num [^bytes bs]
   :let [s (rseq (vec bs))]
