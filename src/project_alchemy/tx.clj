@@ -6,11 +6,15 @@
             [project-alchemy.helper :refer [read-bytes read-varint encode-varint le-bytes->num le-num->bytes hash256]]
             [project-alchemy.script :as script]
             [buddy.core.codecs :refer :all]
+            [buddy.core.bytes :as bytes]
             [clojure.java.io :as io]
             [clojure.core.memoize :as memoize])
   (:import java.io.InputStream))
 
 (declare id)
+(def SIGHASH_ALL 1)
+(def SIGHASH_NONE 2)
+(def SIGHASH_SINGLE 3)
 
 (defrecord Tx [version tx-ins tx-outs locktime testnet?])
 (defrecord TxIn [prev-tx prev-index script-sig sequence])
@@ -40,14 +44,14 @@
 ;; parsing and serializing
 
 (defnc parse-tx-in [^InputStream stream]
-  :let [prev-tx (le-bytes->num (read-bytes stream 32))
+  :let [prev-tx (byte-array (reverse (read-bytes stream 32)))
         prev-index (le-bytes->num (read-bytes stream 4))
         script-sig (script/parse-script stream) 
         sequence (le-bytes->num (read-bytes stream 4))]
   (->TxIn prev-tx prev-index script-sig sequence))
 
 (defn serialize-tx-in ^bytes [{:keys [prev-tx prev-index script-sig sequence]}]
-  (byte-array (concat (rseq prev-tx)
+  (byte-array (concat (reverse prev-tx)
                       (le-num->bytes 4 prev-index)
                       (script/serialize-script script-sig)
                       (le-num->bytes 4 sequence))))
@@ -69,8 +73,8 @@
   (->TxOut amount script-pubkey))
 
 (defn serialize-tx-out [{:keys [amount script-pubkey]}]
-  (byte-array (concat (le-num->bytes 8 amount)
-                      (script/serialize-script script-pubkey))))
+  (bytes/concat (le-num->bytes 8 amount)
+                (script/serialize-script script-pubkey)))
 
 (defnc parse-tx [^InputStream stream testnet?]
   :let [version (le-bytes->num (read-bytes stream 4))
@@ -84,13 +88,50 @@
   (->Tx version tx-ins tx-outs locktime testnet?))
 
 (defn serialize-tx ^bytes [{:keys [version tx-ins tx-outs locktime testnet?]}]
-  (byte-array (flatten (le-num->bytes 4 version)
-                       (encode-varint (count tx-ins))
-                       (for [tx-in tx-ins] (serialize-tx-in tx-in))
-                       (encode-varint (count tx-outs))
-                       (for [tx-out tx-outs] (serialize-tx-out tx-out))
-                       (le-num->bytes 4 locktime))))
-                                                            
+  (byte-array
+   (concat (le-num->bytes 4 version)
+           (encode-varint (count tx-ins))
+           (apply concat (for [tx-in tx-ins] (serialize-tx-in tx-in)))
+           (encode-varint (count tx-outs))
+           (apply concat (for [tx-out tx-outs] (serialize-tx-out tx-out)))
+           (le-num->bytes 4 locktime))))
+
+(defnc sig-hash [{:keys [version tx-ins tx-outs locktime testnet?]} input-index]
+  :let [bytes
+        (byte-array
+         (concat (le-num->bytes 4 version)
+                 (encode-varint (count tx-ins))
+                 (apply concat
+                        (for [i (range (count tx-ins))]
+                          (if (= i input-index)
+                            (script-pubkey (nth tx-ins i))
+                            (byte-array [0x00]))))
+                 (encode-varint (count tx-outs))
+                 (apply concat (for [tx-out tx-outs] (serialize-tx-out tx-out)))
+                 (le-num->bytes 4 locktime)
+                 (le-num->bytes 4 SIGHASH_ALL)))]
+  (bytes->num (hash256 bytes)))
+
+;; def sig_hash(self, input_index):
+;;     '''Returns the integer representation of the hash that needs to get
+;;     signed for index input_index'''
+;;     # start the serialization with version
+;;     # use int_to_little_endian in 4 bytes
+;;     # add how many inputs there are using encode_varint
+;;     # loop through each input using enumerate, so we have the input index
+;;         # if the input index is the one we're signing
+;;         # the previous tx's ScriptPubkey is the ScriptSig
+;;         # Otherwise, the ScriptSig is empty
+;;         # add the serialization of the input with the ScriptSig we want
+;;     # add how many outputs there are using encode_varint
+;;     # add the serialization of each output
+;;     # add the locktime using int_to_little_endian in 4 bytes
+;;     # add SIGHASH_ALL using int_to_little_endian in 4 bytes
+;;     # hash256 the serialization
+;;     # convert the result to an integer using int.from_bytes(x, 'big')
+;;     raise NotImplementedError
+
+
 (defn hash [tx]
   (hash256 (byte-array (rseq (serialize-tx tx)))))
 
@@ -100,7 +141,7 @@
 (defnc fee [{:keys [tx-ins tx-outs]} testnet?]
   :let [value-ins (apply + (for [tx-in tx-ins] (amount-tx-in tx-in)))
         value-outs (apply + (for [tx-out tx-outs] (:amount tx-out)))]
-  (- value-ins value-outs))
+  (-' value-ins value-outs))
   
   
 
