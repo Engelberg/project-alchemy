@@ -5,6 +5,7 @@
   (:require [better-cond.core :refer [cond defnc defnc-]]
             [project-alchemy.helper :refer [read-bytes read-varint encode-varint le-bytes->num le-num->bytes bytes->num hash256] :as helper]
             [project-alchemy.script :as script]
+            [project-alchemy.ecc :as ecc]
             [buddy.core.codecs :refer :all]
             [buddy.core.bytes :as bytes]
             [clojure.java.io :as io]
@@ -144,4 +145,20 @@
 (defnc verify-tx [{:keys [tx-ins] :as tx}]
   (neg? (fee tx)) false
   (every? #(verify-tx-in tx %) (range (count tx-ins))))
+
+(defnc sign-input "Returns signed tx or nil if invalid"
+  [tx input-index private-key]
+  :let [z (sig-hash tx input-index)
+        signature (ecc/sign private-key z)
+        der (ecc/der signature)
+        sighash-all (helper/num->bytes 1 SIGHASH_ALL)
+        full-signature (bytes/concat der sighash-all)
+        sec (ecc/sec (:point private-key))
+        script-sig [full-signature sec]
+        new-tx (assoc-in tx [:tx-ins input-index :script-sig] script-sig)]
+  (verify-tx-in new-tx input-index) new-tx
+  nil)
+        
+        
+  
 

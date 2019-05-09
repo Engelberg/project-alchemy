@@ -7,7 +7,8 @@
             [project-alchemy.helper :refer [hash160 hash256 read-bytes
                                             bytes->num num->bytes]]
             [buddy.core.nonce :as nonce]
-            [buddy.core.codecs :refer :all])
+            [buddy.core.codecs :refer :all]
+            [buddy.core.bytes :as bytes])
   (:import java.util.Arrays
            java.security.SecureRandom
            javax.crypto.Mac
@@ -254,6 +255,23 @@
 
 (defn encode-base58-checksum [bs]
   (encode-base58 (concat bs (take 4 (hash256 bs)))))
+
+(defn decode-base58 ^bytes [s]
+  (let [num (loop [num 0, s (seq s)]
+              (if s
+                (recur (+ (* num 58) (REVERSE-BASE58 (first s))) (next s))
+                num))
+        combined (num->bytes 25 num)
+        checksum (bytes/slice combined 21 25)
+        without-checksum (bytes/slice combined 0 21)]
+    (cond
+      (not= (vec (bytes/slice (hash256 without-checksum) 0 4))
+            (vec checksum))
+      (throw (ex-info "Bad address"
+                      {:checksum (vec checksum),
+                       :computed-checksum
+                       (vec (bytes/slice (hash256 without-checksum) 0 4))}))
+      :else (bytes/slice combined 1 21))))
 
 ;; Addresses
 
