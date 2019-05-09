@@ -39,7 +39,7 @@
         l (count a),
         zeros (repeat (- length l) (byte 0))]
     (if (> l length) 
-      (byte-array (drop (- l length) (seq a)))
+      (byte-array (reverse (drop (- l length) (seq a))))
       (byte-array (reverse (concat zeros a))))))
 
 ;; hashing

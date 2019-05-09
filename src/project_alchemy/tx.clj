@@ -3,7 +3,7 @@
     project-alchemy.tx
   (:refer-clojure :exclude [cond hash])
   (:require [better-cond.core :refer [cond defnc defnc-]]
-            [project-alchemy.helper :refer [read-bytes read-varint encode-varint le-bytes->num le-num->bytes hash256]]
+            [project-alchemy.helper :refer [read-bytes read-varint encode-varint le-bytes->num le-num->bytes bytes->num hash256] :as helper]
             [project-alchemy.script :as script]
             [buddy.core.codecs :refer :all]
             [buddy.core.bytes :as bytes]
@@ -11,7 +11,7 @@
             [clojure.core.memoize :as memoize])
   (:import java.io.InputStream))
 
-(declare id)
+(declare id parse-tx)
 (def SIGHASH_ALL 1)
 (def SIGHASH_NONE 2)
 (def SIGHASH_SINGLE 3)
@@ -33,13 +33,14 @@
         response (slurp url)
         raw (hex->bytes (clojure.string/trim response))
         tx (parse-tx (io/input-stream raw) testnet?)]
-  :do (assert (= (id tx) (:tx-id tx))
-              (format "IDs don't match %s %s" (id tx) (:tx-id tx)))
+  ;; :do (println (id tx) tx-id)
+  :do (assert (= (id tx) tx-id)
+              (format "IDs don't match %s %s" (id tx) tx-id))
   ;; Currently assumes it is NOT a segwit transaction
   ;; Book has hack to work around segwit txs, but seems better to wait
   ;; and code it correctly
-  response)
-(def fetch-tx (memoize/fifo fetch-tx))
+  tx)
+;;(def fetch-tx (memoize/fifo fetch-tx))
 
 ;; parsing and serializing
 
@@ -57,7 +58,7 @@
                       (le-num->bytes 4 sequence))))
 
 (defn fetch-tx-in [{:keys [prev-tx]} testnet?]
-  (fetch-tx (bytes->hex prev-tx)))
+  (fetch-tx (bytes->hex prev-tx) testnet?))
 
 (defnc amount-tx-in [{:keys [prev-index] :as tx-in} testnet?]
   :let [{:keys [tx-outs]} (fetch-tx-in tx-in testnet?)]
@@ -96,53 +97,51 @@
            (apply concat (for [tx-out tx-outs] (serialize-tx-out tx-out)))
            (le-num->bytes 4 locktime))))
 
+(defn tx-hash [tx]
+  (byte-array (reverse (hash256 (serialize-tx tx)))))
+
+(defn id [tx]
+  (bytes->hex (tx-hash tx)))
+
+;; Verifying tx
+
+(defnc fee [{:keys [tx-ins tx-outs testnet?]}]
+  :let [value-ins (apply + (for [tx-in tx-ins] (amount-tx-in tx-in testnet?)))
+        value-outs (apply + (for [tx-out tx-outs] (:amount tx-out)))]
+  (-' value-ins value-outs))
+
 (defnc sig-hash [{:keys [version tx-ins tx-outs locktime testnet?]} input-index]
   :let [bytes
         (byte-array
          (concat (le-num->bytes 4 version)
                  (encode-varint (count tx-ins))
                  (apply concat
-                        (for [i (range (count tx-ins))]
+                        (for [i (range (count tx-ins))
+                              :let [{:keys [prev-tx prev-index script-pubkey
+                                            sequence]}
+                                    (nth tx-ins i)]]
                           (if (= i input-index)
-                            (script-pubkey (nth tx-ins i))
-                            (byte-array [0x00]))))
+                            (serialize-tx-in
+                             (->TxIn prev-tx prev-index
+                                     (script-pubkey-tx-in
+                                      (nth tx-ins i) testnet?)
+                                     sequence))
+                            (serialize-tx-in
+                             (->TxIn prev-tx prev-index nil sequence)))))
                  (encode-varint (count tx-outs))
                  (apply concat (for [tx-out tx-outs] (serialize-tx-out tx-out)))
                  (le-num->bytes 4 locktime)
                  (le-num->bytes 4 SIGHASH_ALL)))]
   (bytes->num (hash256 bytes)))
 
-;; def sig_hash(self, input_index):
-;;     '''Returns the integer representation of the hash that needs to get
-;;     signed for index input_index'''
-;;     # start the serialization with version
-;;     # use int_to_little_endian in 4 bytes
-;;     # add how many inputs there are using encode_varint
-;;     # loop through each input using enumerate, so we have the input index
-;;         # if the input index is the one we're signing
-;;         # the previous tx's ScriptPubkey is the ScriptSig
-;;         # Otherwise, the ScriptSig is empty
-;;         # add the serialization of the input with the ScriptSig we want
-;;     # add how many outputs there are using encode_varint
-;;     # add the serialization of each output
-;;     # add the locktime using int_to_little_endian in 4 bytes
-;;     # add SIGHASH_ALL using int_to_little_endian in 4 bytes
-;;     # hash256 the serialization
-;;     # convert the result to an integer using int.from_bytes(x, 'big')
-;;     raise NotImplementedError
+(defnc verify-tx-in [{:keys [tx-ins testnet?] :as tx} input-index]
+  :let [tx-in (nth tx-ins input-index),
+        script-pubkey (script-pubkey-tx-in tx-in testnet?),
+        z (sig-hash tx input-index),
+        script (concat (:script-sig tx-in) script-pubkey)]
+  (script/evaluate-script script z))
 
-
-(defn hash [tx]
-  (hash256 (byte-array (rseq (serialize-tx tx)))))
-
-(defn id [tx]
-  (bytes->hex (tx-hash tx)))
-
-(defnc fee [{:keys [tx-ins tx-outs]} testnet?]
-  :let [value-ins (apply + (for [tx-in tx-ins] (amount-tx-in tx-in)))
-        value-outs (apply + (for [tx-out tx-outs] (:amount tx-out)))]
-  (-' value-ins value-outs))
-  
-  
-
+(defnc verify-tx [{:keys [tx-ins] :as tx}]
+  (neg? (fee tx)) false
+  (every? #(verify-tx-in tx %) (range (count tx-ins))))
 
