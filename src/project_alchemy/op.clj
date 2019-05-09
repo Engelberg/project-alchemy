@@ -283,7 +283,7 @@
 (defnc op-equal [stack]
   (< (count stack) 2) false
   :let [[t1 t2] (pop stack 2)]
-  (= t1 t2) (push stack (encode-num 1))
+  (= (vec t1) (vec t2)) (push stack (encode-num 1))
   :else (push stack (encode-num 0)))
 
 (defnc op-equalverify [stack]
