@@ -279,14 +279,21 @@
 (defn hash-sec [point compressed?]
   (hash160 (sec point compressed?)))
 
+(defn h160->p2pkh-address [h160 testnet?]
+  (encode-base58-checksum
+   (byte-array (cons (if testnet? (byte 0x6f) (byte 0x00)) h160))))
+
+(defn h160->p2sh-address [h160 testnet?]
+  (encode-base58-checksum
+   (byte-array (cons (if testnet? (unchecked-byte 0xc4) (byte 0x05)) h160))))
+
 (defnc point->address "options map :compressed? and :testnet?"
   ([point] (point->address point {}))
   ([point options]
    :let [{:keys [compressed? testnet?]}
          (merge {:compressed? true, :testnet? false} options),
-         h160 (hash-sec point compressed?),
-         prefix (if testnet? (byte 0x6f) (byte 0x00))]
-   (encode-base58-checksum (byte-array (cons prefix h160)))))
+         h160 (hash-sec point compressed?)]
+   (h160->p2pkh-address h160 testnet?)))
    
 (defnc address->hash [address]
   :let [num (loop [num 0 chars (seq address)]

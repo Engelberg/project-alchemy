@@ -5,7 +5,8 @@
             [buddy.core.bytes :as bytes]
             [buddy.core.codecs :refer :all]
             [project-alchemy.op :as op :refer [op-code-functions op-code-names]]
-            [clojure.tools.logging :as log])
+            [clojure.tools.logging :as log]
+            [clojure.java.io :as io])
   (:import java.io.InputStream java.util.Stack))
 
 (defnc parse-script [^InputStream stream]
@@ -65,7 +66,23 @@
                  (cond
                    (nil? script) true
                    :let [cmd (first script) script (next script)]
-                   (not (number? cmd)) (do (.push stack cmd) (recur script))
+                   (not (number? cmd))
+                   (cond
+                     :do (.push stack cmd)
+                     :let [[cmd0 cmd1 cmd2] script]
+                     (not (and (= (count script) 3)
+                               (= cmd0 0xa9)
+                               (bytes? cmd1)
+                               (= (count cmd1) 20)
+                               (= cmd2 0x87)))
+                     (recur script),
+                     (not (op/op-hash160 stack)) false
+                     :do (.push stack cmd1)
+                     (not (op/op-equal stack)) false
+                     (not (op/op-verify stack)) (do (log/info "bad p2sh h160") false)
+                     :let [redeem-script (bytes/concat (encode-varint (count cmd))
+                                                       cmd)]
+                     (recur (parse-script (io/input-stream redeem-script))))
                    :let [op (op-code-functions cmd)]
                    (#{99 100} cmd) (let [a-items (atom script)]
                                      (if-not (op stack a-items)
@@ -88,4 +105,18 @@
   (= (count (.pop stack)) 0) false
   true)
                    
-      
+(defn p2pkh-script [h160]
+  [0x76 0xa9 h160 0x88 0xac])
+
+(defn p2pkh-script? [[cmd0 cmd1 cmd2 cmd3 cmd4 :as cmds]]
+  (and (= (count cmds) 5)
+       (= cmd0 0x76) (= cmd1 0xa9)
+       (bytes? cmd2) (= (count cmd2) 20)
+       (= cmd3 0x88) (= cmd4 0xac)))
+
+(defn p2sh-script [h160]
+  [0xa9 h160 0x87])
+
+(defn p2sh-script? [[cmd0 cmd1 cmd2 :as cmds]]
+  (and (= (count cmds) 3)
+       (= cmd0 0xa9) (bytes? cmd1) (= (count cmd1) 20) (= cmd2 0x87)))

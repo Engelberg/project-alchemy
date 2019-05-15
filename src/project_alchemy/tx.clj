@@ -9,6 +9,7 @@
             [buddy.core.codecs :refer :all]
             [buddy.core.bytes :as bytes]
             [clojure.java.io :as io]
+            [medley.core :as medley]
             [clojure.core.memoize :as memoize])
   (:import java.io.InputStream))
 
@@ -111,34 +112,38 @@
         value-outs (apply + (for [tx-out tx-outs] (:amount tx-out)))]
   (-' value-ins value-outs))
 
-(defnc sig-hash [{:keys [version tx-ins tx-outs locktime testnet?]} input-index]
-  :let [bytes
-        (byte-array
-         (concat (le-num->bytes 4 version)
-                 (encode-varint (count tx-ins))
-                 (apply concat
-                        (for [i (range (count tx-ins))
-                              :let [{:keys [prev-tx prev-index script-pubkey
-                                            sequence]}
-                                    (nth tx-ins i)]]
-                          (if (= i input-index)
-                            (serialize-tx-in
-                             (->TxIn prev-tx prev-index
-                                     (script-pubkey-tx-in
-                                      (nth tx-ins i) testnet?)
-                                     sequence))
-                            (serialize-tx-in
-                             (->TxIn prev-tx prev-index nil sequence)))))
-                 (encode-varint (count tx-outs))
-                 (apply concat (for [tx-out tx-outs] (serialize-tx-out tx-out)))
-                 (le-num->bytes 4 locktime)
-                 (le-num->bytes 4 SIGHASH_ALL)))]
-  (bytes->num (hash256 bytes)))
-
+(defnc sig-hash
+  ([tx input-index] (sig-hash tx input-index nil))
+  ([{:keys [version tx-ins tx-outs locktime testnet?]} input-index redeem-script]
+   :let [bytes
+         (byte-array
+          (concat (le-num->bytes 4 version)
+                  (encode-varint (count tx-ins))
+                  (apply concat
+                         (for [[i tx-in] (medley/indexed tx-ins)
+                               :let [{:keys [prev-tx prev-index script-pubkey
+                                             sequence]} tx-in]]
+                           (serialize-tx-in
+                            (->TxIn prev-tx prev-index
+                                    (when (= i input-index)
+                                      (if redeem-script redeem-script
+                                          (script-pubkey-tx-in tx-in testnet?)))
+                                    sequence))))
+                  (encode-varint (count tx-outs))
+                  (apply concat (for [tx-out tx-outs] (serialize-tx-out tx-out)))
+                  (le-num->bytes 4 locktime)
+                  (le-num->bytes 4 SIGHASH_ALL)))]
+   (bytes->num (hash256 bytes))))
+  
 (defnc verify-tx-in [{:keys [tx-ins testnet?] :as tx} input-index]
-  :let [tx-in (nth tx-ins input-index),
-        script-pubkey (script-pubkey-tx-in tx-in testnet?),
-        z (sig-hash tx input-index),
+  :let [{:keys [script-sig] :as tx-in} (nth tx-ins input-index),
+        script-pubkey (script-pubkey-tx-in tx-in testnet?)
+        redeem-script (when (script/p2sh-script? script-pubkey)
+                        (let [cmd (last script-sig),
+                              raw-redeem (bytes/concat (encode-varint (count cmd))
+                                                       cmd)]
+                          (script/parse-script (io/input-stream raw-redeem))))
+        z (sig-hash tx input-index redeem-script),
         script (concat (:script-sig tx-in) script-pubkey)]
   (script/evaluate-script script z))
 
