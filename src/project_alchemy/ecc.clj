@@ -192,6 +192,7 @@
      (byte-array
       (concat (if (even? (:num y)) [2] [3]) (num->bytes 32 (:num x)))))))
 
+;; Currently doesn't give meaningful errors if bytes are wrong length
 (defnc parse-sec "Parses SEC bytes" [^bytes sec-bytes]
   :let [flag (nth sec-bytes 0)]
   (= flag 4) (->S256Point (bytes->num (Arrays/copyOfRange sec-bytes 1 33))

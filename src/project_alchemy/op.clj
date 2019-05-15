@@ -5,7 +5,10 @@
             [clojure.math.numeric-tower :as m]
             [project-alchemy.ecc :as ecc]
             [buddy.core.codecs :refer :all]
-            [buddy.core.hash :as h])  
+            [buddy.core.hash :as h]
+            [buddy.core.bytes :as bytes]
+            [medley.core :as medley]
+            [clojure.tools.logging :as log])
   (:import java.util.Stack java.util.Arrays))
 
 (defn pop
@@ -421,11 +424,12 @@
 
 (defnc op-checksig [stack z]
   :let [[sec-bytes der-bytes] (pop stack 2)
-        der-bytes (Arrays/copyOfRange der-bytes
-                                      (int 0)
-                                      (int (dec (count der-bytes))))
-        pubkey (ecc/parse-sec sec-bytes),
-        signature (ecc/parse-der der-bytes)]
+        der-bytes (bytes/slice der-bytes 0 (dec (count der-bytes)))
+        pubkey (try (ecc/parse-sec sec-bytes) (catch Exception e e)),
+        signature (try (ecc/parse-der der-bytes) (catch Exception e e))]
+  (instance? Exception pubkey) (do (log/info "Invalid pubkey" (ex-data pubkey)) false)
+  (instance? Exception signature) (do (log/info "Invalid signature" (ex-data signature))
+                                      false)
   (ecc/verify-signature pubkey z signature) (op-1 stack)
   :else (op-0 stack))
 
@@ -433,10 +437,34 @@
   (and (op-checksig stack z) (op-verify stack)))
 
 (defnc op-checkmultisig [stack z]
-  (throw (UnsupportedOperationException.)))
+  (< (count stack) 1) false
+  :let [n (decode-num (pop stack))]
+  (< (count stack) (inc n)) false
+  :let [pubkeys
+        (try (into [] (map ecc/parse-sec) (pop stack n))
+             (catch Throwable e e)),
+        m (decode-num (pop stack))]
+  (instance? Throwable pubkeys) (do (log/info "Invalid pubkey" pubkeys) false)
+  (< (count stack) (inc m)) false
+  :let [signatures
+        (try (into [] (comp (map #(bytes/slice % 0 (dec (count %))))
+                            (map ecc/parse-der))
+                   (pop stack m))
+             (catch Throwable e e))
+        ;; book code assumes signature is signed with SIGHASH_ALL flag        
+        _ (pop stack)]
+  (instance? Throwable signatures) (do (log/info "Invalid signature" signatures)
+                                       false)
+  (loop [pubkeys (seq pubkeys), signatures (seq signatures)]
+    (cond
+      (nil? signatures) (op-1 stack)
+      (nil? pubkeys) (op-0 stack)
+      :let [sig (first signatures), pubkey (first pubkeys)]
+      (ecc/verify-signature pubkey z sig) (recur (next pubkeys) (next signatures))
+      :else (recur (next pubkeys) signatures))))
 
 (defnc op-checkmultisigverify [stack z]
-  (throw (UnsupportedOperationException.)))
+  (and (op-checkmultisig stack z) (op-verify stack)))
 
 (defnc op-checklocktimeverify [stack locktime sequence]
   (= sequence 0xffffffff) false
