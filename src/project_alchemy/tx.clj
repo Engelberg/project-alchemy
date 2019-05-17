@@ -99,11 +99,11 @@
            (apply concat (for [tx-out tx-outs] (serialize-tx-out tx-out)))
            (le-num->bytes 4 locktime))))
 
-(defn tx-hash [tx]
+(defn hash-tx [tx]
   (byte-array (reverse (hash256 (serialize-tx tx)))))
 
 (defn id [tx]
-  (bytes->hex (tx-hash tx)))
+  (bytes->hex (hash-tx tx)))
 
 ;; Verifying tx
 
@@ -164,6 +164,12 @@
   (verify-tx-in new-tx input-index) new-tx
   nil)
         
-        
-  
+(defnc coinbase-tx? [{[{:keys [prev-tx prev-index]} :as tx-ins] :tx-ins :as tx}]
+  (and (= (count tx-ins) 1)
+       (bytes/equals? prev-tx (byte-array (repeat 32 (byte 0))))
+       (= prev-index 0xffffffff)))
+
+(defnc coinbase-height [{[{:keys [script-sig]}] :tx-ins :as coinbase-tx}]
+  :when (coinbase-tx? coinbase-tx)
+  (le-bytes->num (nth script-sig 0)))
 

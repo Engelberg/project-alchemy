@@ -1,8 +1,14 @@
 (ns project-alchemy.helper
   (:refer-clojure :exclude [cond])
   (:require [better-cond.core :refer [cond defnc defnc-]]
-            [buddy.core.hash :as h])
+            [buddy.core.codecs :refer :all]
+            [buddy.core.bytes :as bytes]
+            [buddy.core.hash :as h]
+            [clojure.math.numeric-tower :as m])
   (:import java.io.InputStream))
+
+(def TWO_WEEKS (* 60 60 24 14))
+(def MAX_TARGET 0x00000000FFFF0000000000000000000000000000000000000000000000000000)
 
 (defn read-bytes ^bytes [^InputStream stream length]
   (let [buffer (byte-array length)]
@@ -67,4 +73,25 @@
     (< i 0x100000000) (byte-array (cons (unchecked-byte 0xfe) (le-num->bytes 4 i)))
     (< i 0x10000000000000000) (byte-array (cons (unchecked-byte 0xff) (le-num->bytes 8 i)))
     :else (throw (ex-info "Integer too large" {:integer i}))))
+
+(defnc bits->target [^bytes bits]
+  :let [exponent (nth bits 3),
+        coefficient (le-bytes->num (bytes/slice bits 0 3))]
+  (*' coefficient (m/expt 256 (- exponent 3))))
+
+(defn target->bits ^bytes [target]
+  (cond
+    :let [bytes (into [] (drop-while #{0}) (seq (num->bytes 32 target)))
+          [exponent coefficient] (if (> (nth bytes 0) 0x7f)
+                                   [(inc (count bytes)) (cons [0] (subvec bytes 0 2))]
+                                   [(count bytes) (subvec bytes 0 3)])]
+    (byte-array (concat (reverse coefficient) [(unchecked-byte exponent)]))))
+
+(defnc calculate-new-bits [prev-bits time-differential]
+  :let [time-differential (cond (> time-differential (* 4 TWO_WEEKS)) (* 4 TWO_WEEKS)
+                                (< time-differential (/ TWO_WEEKS 4)) (/ TWO_WEEKS 4)
+                                :else time-differential),
+        prev-target (bits->target prev-bits)
+        new-target (min MAX_TARGET (/ (* prev-target time-differential) TWO_WEEKS))]
+  (target->bits new-target))
 

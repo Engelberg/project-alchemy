@@ -12,5 +12,6 @@
                  [byte-streams "0.2.4"]
                  [funcool/octet "1.1.1"]
                  [bytebuffer "0.2.0"]
+                 [aleph "0.4.6"]
                  [gloss "0.2.6"]]
   :repl-options {:init-ns project-alchemy.core})
