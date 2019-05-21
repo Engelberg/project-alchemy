@@ -10,10 +10,13 @@
 (def TWO_WEEKS (* 60 60 24 14))
 (def MAX_TARGET 0x00000000FFFF0000000000000000000000000000000000000000000000000000)
 
+;; (defn read-bytes ^bytes [^InputStream stream length]
+;;   (let [buffer (byte-array length)]
+;;     (.read stream buffer)
+;;     buffer))
+
 (defn read-bytes ^bytes [^InputStream stream length]
-  (let [buffer (byte-array length)]
-    (.read stream buffer)
-    buffer))
+  (byte-array (for [_ (range length)] (.read stream))))
 
 (defn unsigned-byte [b]
   (if (neg? b) (+ 256 b) b))
@@ -82,8 +85,8 @@
 (defn target->bits ^bytes [target]
   (cond
     :let [bytes (into [] (drop-while #{0}) (seq (num->bytes 32 target)))
-          [exponent coefficient] (if (> (nth bytes 0) 0x7f)
-                                   [(inc (count bytes)) (cons [0] (subvec bytes 0 2))]
+          [exponent coefficient] (if (> (unsigned-byte (nth bytes 0)) 0x7f)
+                                   [(inc (count bytes)) (cons 0 (subvec bytes 0 2))]
                                    [(count bytes) (subvec bytes 0 3)])]
     (byte-array (concat (reverse coefficient) [(unchecked-byte exponent)]))))
 

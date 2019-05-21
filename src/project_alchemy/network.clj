@@ -32,7 +32,7 @@
 (defrecord NetworkEnvelope [command payload testnet?])
 
 (defnc pprint-NetworkEnvelope [{:keys [magic command payload testnet?]}]
-  (print (->NetworkEnvelope (String. command) (bytes->hex payload) testnet?)))
+  (print (->NetworkEnvelope (String. command) (bytes->hex (bytes/slice payload 0 40)) testnet?)))
 (. clojure.pprint/simple-dispatch addMethod NetworkEnvelope pprint-NetworkEnvelope)
 
 (defn parse-network-envelope ^bytes [^InputStream stream]
@@ -47,6 +47,7 @@
     (not (bytes/equals? payload-checksum payload-computed-checksum))
     (throw (ex-info "Invalid payload" {:command (String. command),
                                        :payload-length payload-length,
+                                       :actual-payload-length (count payload)
                                        :payload payload,
                                        :payload-checksum payload-checksum,
                                        :payload-hash payload-hash
@@ -113,9 +114,31 @@
 (defmethod parse-message "pong" [_ ^InputStream payload]
   {:command-name "pong", :nonce (read-bytes payload 8)})
 
-(defmethod parse-message :default [_ _] nil)
+(defrecord GetHeadersMessage [command-name version num-hashes start-block end-block])
+(defnc map->GetHeadersMessage [m]
+  :let [{:keys [version num-hashes start-block end-block]}
+        (merge {:version 70015, :num-hashes 1, :end-block (byte-array (repeat 32 0))}
+               m)]
+  :do (assert start-block "a start block is required")
+  (GetHeadersMessage. "getheaders" version num-hashes start-block end-block))
 
-;; (defrecord Node [host port testnet? logging?])
+(defmethod serialize-message "getheaders"
+  [{:keys [version num-hashes start-block end-block]}]
+  (byte-array (concat (le-num->bytes 4 version) (encode-varint num-hashes)
+                      (reverse start-block) (reverse end-block))))
+
+(defmethod parse-message "headers" [_ ^InputStream payload]
+  (cond
+    :let [num-headers (read-varint payload),
+          blocks (for [_ (range num-headers)
+                       :let [block (block/parse-block payload),
+                             num-txs (read-varint payload)]]
+                   (if (not= num-txs 0)
+                     (throw (ex-info "Number of txs not 0" {:num-txs num-txs}))
+                     block))]
+    {:command-name "headers", :blocks (vec blocks)}))
+
+(defmethod parse-message :default [_ _] nil)
 
 (defnc encode-message
   "Wraps message in network envelope"
@@ -156,7 +179,7 @@
             (send-message node (assoc msg :command-name "pong")))
       (contains? command-names command-name) msg
       (recur))))
-                  
+
 (defn handshake [node]
   (send-message node (map->VersionMessage {}))
   (loop [verack-received? false version-received? false]
@@ -166,3 +189,43 @@
             cn (:command-name msg)]
       (= cn "version") (recur verack-received? true)
       (= cn "verack") (recur true version-received?))))
+
+(defn check-blocks []
+  (let [previous (atom (block/parse-block (io/input-stream block/GENESIS_BLOCK))),
+        hash-previous #(block/hash-block @previous)
+        first-epoch-timestamp (atom (:timestamp @previous)),
+        expected-bits (atom block/LOWEST_BITS),
+        node (simple-node {:host "mainnet.programmingbitcoin.com" :testnet? false
+                           :logging? true})
+        count (atom 1)]
+    ;; (add-watch previous :watcher
+    ;;            (fn [key atom old-state new-state]
+    ;;              (println "New timestamp:" (:timestamp new-state))))
+    (handshake node)
+    (dotimes [i 19]      
+      (let [getheaders (map->GetHeadersMessage {:start-block (hash-previous)})
+            _ (send-message node getheaders)
+            headers (wait-for node #{"headers"})]
+        (doseq [header (:blocks headers)]
+          (cond
+            (not (block/valid-pow? header))
+            (throw (ex-info "Bad PoW at block" {:count @count})),
+            (not (bytes/equals? (:prev-block header) (hash-previous)))
+            (throw (ex-info "Discontinuous block" {:count @count,
+                                                   :prev-block-header
+                                                   (bytes->hex (:prev-block header)),
+                                                   :hash-previous
+                                                   (bytes->hex (hash-previous))})),
+            :do (when (and (not= 0 @count) (= 0 (mod @count 2016)))
+                  (let [time-diff (- (:timestamp @previous)
+                                     @first-epoch-timestamp)]
+                    (reset! expected-bits (helper/calculate-new-bits
+                                           (:bits @previous) time-diff))
+                    (println (bytes->hex @expected-bits))
+                    (reset! first-epoch-timestamp (:timestamp header))))
+            (not (bytes/equals? (:bits header) @expected-bits))
+            (throw (ex-info "bad bits at block"
+                            {:count @count
+                             :bits-header (bytes->hex (:bits header))
+                             :expected-bits (bytes->hex @expected-bits)}))
+            (do (swap! count inc) (reset! previous header))))))))

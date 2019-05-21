@@ -13,6 +13,10 @@
             [clojure.math.numeric-tower :as m])
   (:import java.io.InputStream))
 
+(def GENESIS_BLOCK (hex->bytes "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c"))
+(def TESTNET_GENESIS_BLOCK (hex->bytes "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4adae5494dffff001d1aa4ae18"))
+(def LOWEST_BITS (hex->bytes "ffff001d"))
+
 (defrecord Block [version prev-block merkle-root timestamp bits nonce])
 
 (defnc parse-block [^InputStream stream]
