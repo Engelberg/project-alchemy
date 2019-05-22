@@ -9,6 +9,7 @@
                  [org.clojure/math.numeric-tower "0.0.4"]
                  [org.clojure/core.memoize "0.7.1"]
                  [buddy/buddy-core "1.4.0"]
+                 [com.google.guava/guava "27.1-jre"]
                  [byte-streams "0.2.4"]
                  [funcool/octet "1.1.1"]
                  [bytebuffer "0.2.0"]

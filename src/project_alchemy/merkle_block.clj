@@ -41,7 +41,7 @@
       :else (let [r (z/replace loc (helper/merkle-parent left right))]
               (recur (z/prev r) r)))))
 
-(defrecord MerkleBlock [version prev-block merkle-root timestamp bits nonce total hashes flags])
+(defrecord MerkleBlock [command-name version prev-block merkle-root timestamp bits nonce total hashes flags])
 
 (defnc parse-merkle-block [^InputStream s]
   :let [version (le-bytes->num (read-bytes s 4)),
@@ -55,7 +55,7 @@
         hashes (vec (for [i (range num-hashes)]
                       (byte-array (reverse (read-bytes s 32)))))
         flags (read-bytes s (read-varint s))]
-  (->MerkleBlock version prev-block merkle-root timestamp bits nonce total hashes flags))
+  (->MerkleBlock "merkleblock" version prev-block merkle-root timestamp bits nonce total hashes flags))
 
 (defnc valid-merkle-block? [{:keys [total hashes flags merkle-root]}]
   :let [flag-bits (helper/bytes->bits flags),

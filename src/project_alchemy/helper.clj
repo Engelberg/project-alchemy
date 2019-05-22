@@ -4,8 +4,11 @@
             [buddy.core.codecs :refer :all]
             [buddy.core.bytes :as bytes]
             [buddy.core.hash :as h]
-            [clojure.math.numeric-tower :as m])
-  (:import java.io.InputStream))
+            [clojure.math.numeric-tower :as m]
+            [medley.core :as medley])
+  (:import java.io.InputStream
+           com.google.common.hash.Hashing
+           com.google.common.hash.HashCode))
 
 (def TWO_WEEKS (* 60 60 24 14))
 (def MAX_TARGET 0x00000000FFFF0000000000000000000000000000000000000000000000000000)
@@ -121,3 +124,20 @@
                       (recur (conj bits (bit-and byte 1))
                              (unsigned-bit-shift-right byte 1) (dec n))))))))
 
+(defn bits->bytes [bits]
+  (assert (= 0 (mod (count bits) 8)) "Length of bit field must be divisible by 8")
+  (byte-array
+   (reduce (fn [bytes [i bit]]
+             (let [[byte-index bit-index] [(quot i 8) (mod i 8)]]
+               (if (= bit 1)
+                 (update bytes byte-index #(bit-or % (bit-shift-left 1 bit-index)))
+                 bytes)))
+           (vec (repeat (quot (count bits) 8) 0))
+           (medley/indexed bits))))
+
+(defn murmur3
+  (^long [data] (murmur3 data 0))
+  (^long [data seed]
+   (let [hf (Hashing/murmur3_32 seed)
+         ^HashCode hc (.hashBytes hf data)]
+     (.padToLong hc))))

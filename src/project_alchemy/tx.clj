@@ -18,7 +18,7 @@
 (def SIGHASH_NONE 2)
 (def SIGHASH_SINGLE 3)
 
-(defrecord Tx [version tx-ins tx-outs locktime testnet?])
+(defrecord Tx [command-name version tx-ins tx-outs locktime testnet?])
 (defrecord TxIn [prev-tx prev-index script-sig sequence])
 (defrecord TxOut [amount script-pubkey])
 
@@ -88,7 +88,7 @@
         tx-outs (vec (for [i (range num-tx-outs)]
                        (parse-tx-out stream)))
         locktime (le-bytes->num (read-bytes stream 4))]
-  (->Tx version tx-ins tx-outs locktime testnet?))
+  (->Tx "tx" version tx-ins tx-outs locktime testnet?))
 
 (defn serialize-tx ^bytes [{:keys [version tx-ins tx-outs locktime testnet?]}]
   (byte-array
@@ -134,7 +134,7 @@
                   (le-num->bytes 4 locktime)
                   (le-num->bytes 4 SIGHASH_ALL)))]
    (bytes->num (hash256 bytes))))
-  
+
 (defnc verify-tx-in [{:keys [tx-ins testnet?] :as tx} input-index]
   :let [{:keys [script-sig] :as tx-in} (nth tx-ins input-index),
         script-pubkey (script-pubkey-tx-in tx-in testnet?)
@@ -163,7 +163,7 @@
         new-tx (assoc-in tx [:tx-ins input-index :script-sig] script-sig)]
   (verify-tx-in new-tx input-index) new-tx
   nil)
-        
+
 (defnc coinbase-tx? [{[{:keys [prev-tx prev-index]} :as tx-ins] :tx-ins :as tx}]
   (and (= (count tx-ins) 1)
        (bytes/equals? prev-tx (byte-array (repeat 32 (byte 0))))

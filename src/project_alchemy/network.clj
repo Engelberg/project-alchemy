@@ -7,6 +7,9 @@
                                             le-bytes->num le-num->bytes hash256]
              :as helper]
             [project-alchemy.block :as block]
+            [project-alchemy.merkle-block :as merkle]
+            [project-alchemy.tx :as tx]
+            [project-alchemy.bloomfilter :as bloom]
             [buddy.core.codecs :refer :all]
             [buddy.core.bytes :as bytes]
             [buddy.core.nonce :as nonce]
@@ -20,8 +23,14 @@
             [aleph.tcp :as tcp]
             [byte-streams]
             [clojure.pprint :refer [pprint]]
-            [clojure.tools.logging :as log])            
+            [clojure.tools.logging :as log]
+            [project-alchemy.script :as script])            
   (:import java.io.InputStream))
+
+(def TX_DATA_TYPE 1)
+(def BLOCK_DATA_TYPE 2)
+(def FILTERED_BLOCK_DATA_TYPE 3)
+(def COMPACT_BLOCK_DATA_TYPE 4)
 
 (def NETWORK_MAGIC (byte-array (map unchecked-byte [0xf9 0xbe 0xb4 0xd9])))
 (def TESTNET_NETWORK_MAGIC (byte-array (map unchecked-byte [0x0b 0x11 0x09 0x07])))
@@ -83,7 +92,7 @@
                     sender-port nonce user-agent latest-block relay?))
 
 (defmulti serialize-message :command-name)
-(defmulti parse-message (fn [command-name payload] command-name))
+(defmulti parse-message (fn [{:keys [command-name]} payload] command-name))
 
 (defmethod serialize-message "version"
   [{:keys [version services timestamp receiver-services
@@ -138,7 +147,23 @@
                      block))]
     {:command-name "headers", :blocks (vec blocks)}))
 
+(defmethod serialize-message "getdata" [{:keys [data]}]
+  (byte-array (concat (encode-varint (count data))
+                      (mapcat (fn [[data-type identifier]]
+                                (concat (le-num->bytes 4 data-type)
+                                        (reverse identifier)))
+                              data))))
+
+(defmethod parse-message "merkleblock" [_ ^InputStream payload]
+  (merkle/parse-merkle-block payload))
+
+(defmethod parse-message "tx" [{:keys [testnet?]} ^InputStream payload]
+  (tx/parse-tx payload testnet?))
+(defmethod serialize-message "tx" [tx]
+  (tx/serialize-tx tx))
+
 (defmethod parse-message :default [_ _] nil)
+(defmethod serialize-message :default [{:keys [payload]}] payload)
 
 (defnc encode-message
   "Wraps message in network envelope"
@@ -148,13 +173,14 @@
   :do (when logging? (log/info "Sending" (with-out-str (pprint envelope))))
   (serialize-network-envelope envelope))
 
-(defnc decode-message [{:keys [logging?]} ^InputStream stream]
+(defnc decode-message [{:keys [logging? testnet?]} ^InputStream stream]
   :let [{:keys [command payload] :as envelope}
         (parse-network-envelope stream),
         command-name (String. command)]
   :do (def envelope envelope)
   :do (when logging? (log/info "Receiving" (with-out-str (pprint envelope))))
-  (parse-message command-name (io/input-stream payload)))
+  (parse-message {:command-name command-name, :testnet? testnet?}
+                 (io/input-stream payload)))
 
 (defnc simple-node [options]
   :let [node (merge {:host "testnet.programmingbitcoin.com", :testnet? true,
@@ -229,3 +255,37 @@
                              :bits-header (bytes->hex (:bits header))
                              :expected-bits (bytes->hex @expected-bits)}))
             (do (swap! count inc) (reset! previous header))))))))
+
+;; The following code is based on sample from the book, but the book code
+;; is deficient in several ways. It assumes merkle proof comes before tx,
+;; and it doesn't ensure the proof is for the tx in question.
+
+(defnc get-transaction-of-interest [last-block-hex address testnet?]
+  :let [h160 (ecc/decode-base58 address),
+        node (simple-node {:testnet? true, :logging? false}),
+        bf (bloom/add-to-filter (bloom/->BloomFilter 30 5 90210) h160)
+        start-block (hex->bytes last-block-hex)]
+  :do (handshake node)
+  :do (send-message node (bloom/filterload bf))
+  :do (send-message node (map->GetHeadersMessage {:start-block start-block}))
+  :let [headers (wait-for node #{"headers"})
+        data (for [b (:blocks headers)]
+               (if (not (block/valid-pow? b))
+                 (throw (ex-info "Proof of work invalid" b))
+                 [FILTERED_BLOCK_DATA_TYPE (block/hash-block b)]))]
+  :do (send-message node {:command-name "getdata", :data data})
+  (loop []
+    (cond
+      :let [message (wait-for node #{"merkleblock" "tx"})]
+      (= (:command-name message) "merkleblock")
+      (do (println "Checking merkle proof")
+          (assert (merkle/valid-merkle-block? message) "Invalid merkle proof")
+          (recur)),
+      :let [matching-txs (for [[i tx-out] (medley/indexed (:tx-outs message))
+                               :when (= address (script/address
+                                                 (:script-pubkey tx-out)
+                                                 testnet?))]
+                           [(tx/id message) i])]
+      (seq matching-txs) matching-txs
+      :else (recur))))
+                           

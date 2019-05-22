@@ -6,7 +6,8 @@
             [buddy.core.codecs :refer :all]
             [project-alchemy.op :as op :refer [op-code-functions op-code-names]]
             [clojure.tools.logging :as log]
-            [clojure.java.io :as io])
+            [clojure.java.io :as io]
+            [project-alchemy.ecc :as ecc])
   (:import java.io.InputStream java.util.Stack))
 
 (defnc parse-script [^InputStream stream]
@@ -120,3 +121,8 @@
 (defn p2sh-script? [[cmd0 cmd1 cmd2 :as cmds]]
   (and (= (count cmds) 3)
        (= cmd0 0xa9) (bytes? cmd1) (= (count cmd1) 20) (= cmd2 0x87)))
+
+(defnc address [script testnet?]
+  (p2pkh-script? script) (ecc/h160->p2pkh-address (nth script 2) testnet?)
+  (p2sh-script? script) (ecc/h160->p2sh-address (nth script 1) testnet?))
+  
