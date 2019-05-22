@@ -54,3 +54,9 @@
 
 (defn valid-pow? [block]
   (< (le-bytes->num (hash256 (serialize-block block))) (target block)))
+
+(defn valid-merkle-root? [block]
+  (bytes/equals? (:merkle-root block)
+                 (byte-array (reverse (helper/merkle-root
+                                       (into [] (comp (map reverse) (map byte-array))
+                                             (:tx-hashes block)))))))
